@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 
 // Balance between retro pixel art and crispness
 const SCALE     = 3.5;
@@ -56,7 +56,10 @@ function spawnConfetti(W, H, particles) {
 }
 
 function mkBalls(W, H) {
-  const br = Math.max(7, Math.min(Math.floor(W * 0.021), 11));
+  const isSmallScreen = (typeof window !== "undefined" && Math.min(window.innerWidth, window.innerHeight) < 640) || W < 320;
+  const br = isSmallScreen
+    ? Math.max(4, Math.min(Math.floor(W * 0.015), 5))
+    : Math.max(7, Math.min(Math.floor(W * 0.021), 11));
   const sp = Math.ceil(br * 2.06);
   const ax = Math.round(W * 0.725), ay = Math.round(H / 2);
   const balls = [];
@@ -367,7 +370,7 @@ function render(ctx, W, H, balls, pockets, particles) {
 
   balls.forEach(b=>{
     if (b.dead) return;
-    const {x,y,color,stripe,label} = b;
+    const {x,y,color,stripe} = b;
     const scale = b.scale || 1;
     const br = Math.max(1, b.br * scale);
     const rx = Math.round(x), ry = Math.round(y);
@@ -442,14 +445,21 @@ function render(ctx, W, H, balls, pockets, particles) {
   });
 }
 
-export default function SnookerTable() {
+export default function SnookerTable({ tableRef }) {
   const canvasRef = useRef(null);
+  const [isPortrait, setIsPortrait] = useState(
+    typeof window !== "undefined" ? window.innerHeight > window.innerWidth : false
+  );
   const S = useRef({ W:0, H:0, balls:[], pockets:[], particles:[], grabbed:null, mouse:{x:-9999,y:-9999}, velHist:[], anim:null, winTriggered:false });
 
   const init = useCallback(() => {
     const c = canvasRef.current; if (!c) return;
-    const W = Math.floor(window.innerWidth  / SCALE);
-    const H = Math.floor(window.innerHeight / SCALE);
+    const portrait = window.innerHeight > window.innerWidth;
+    setIsPortrait(portrait);
+    const winW = portrait ? window.innerHeight : window.innerWidth;
+    const winH = portrait ? window.innerWidth : window.innerHeight;
+    const W = Math.floor(winW / SCALE);
+    const H = Math.floor(winH / SCALE);
     c.width = W; c.height = H;
     const s = S.current;
     s.W = W; s.H = H;
@@ -460,23 +470,45 @@ export default function SnookerTable() {
     s.winTriggered = false;
   }, []);
 
-  const loop = useCallback(() => {
-    const c = canvasRef.current; if (!c) return;
-    const ctx = c.getContext("2d");
-    const s   = S.current;
-    simulate(s.balls, s.W, s.H, s.pockets, s.particles, s.mouse, s.grabbed, s);
-    render(ctx, s.W, s.H, s.balls, s.pockets, s.particles);
-    s.anim = requestAnimationFrame(loop);
-  }, []);
+  useEffect(() => {
+    if (tableRef) {
+      tableRef.current = {
+        reset: () => {
+          init();
+        }
+      };
+    }
+  }, [tableRef, init]);
 
   useEffect(() => {
     init();
-    S.current.anim = requestAnimationFrame(loop);
+    let animId;
+    const run = () => {
+      const c = canvasRef.current;
+      if (c) {
+        const ctx = c.getContext("2d");
+        const s = S.current;
+        simulate(s.balls, s.W, s.H, s.pockets, s.particles, s.mouse, s.grabbed, s);
+        render(ctx, s.W, s.H, s.balls, s.pockets, s.particles);
+      }
+      animId = requestAnimationFrame(run);
+    };
+    animId = requestAnimationFrame(run);
     window.addEventListener("resize", init);
-    return () => { window.removeEventListener("resize", init); if (S.current.anim) cancelAnimationFrame(S.current.anim); };
-  }, [init, loop]);
+    return () => {
+      window.removeEventListener("resize", init);
+      cancelAnimationFrame(animId);
+    };
+  }, [init]);
 
-  const toLog = useCallback((cx, cy) => ({ x: cx / SCALE, y: cy / SCALE }), []);
+  const toLog = useCallback((cx, cy) => {
+    if (window.innerHeight > window.innerWidth) {
+      const canvasX = cy;
+      const canvasY = window.innerWidth - cx;
+      return { x: canvasX / SCALE, y: canvasY / SCALE };
+    }
+    return { x: cx / SCALE, y: cy / SCALE };
+  }, []);
 
   const onDown = useCallback((cx, cy) => {
     const {x,y} = toLog(cx,cy);
@@ -505,10 +537,33 @@ export default function SnookerTable() {
   }, []);
 
   return (
-    <div style={{width:"100vw",height:"100vh",overflow:"hidden",background:"#1b5e27"}}>
+    <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "#1b5e27", position: "relative" }}>
       <canvas
         ref={canvasRef}
-        style={{width:"100vw",height:"100vh",display:"block",imageRendering:"pixelated",touchAction:"none",cursor:"default"}}
+        style={
+          isPortrait
+            ? {
+                position: "fixed",
+                left: "50%",
+                top: "50%",
+                width: `${window.innerHeight}px`,
+                height: `${window.innerWidth}px`,
+                transform: "translate(-50%, -50%) rotate(90deg)",
+                transformOrigin: "center center",
+                display: "block",
+                imageRendering: "pixelated",
+                touchAction: "none",
+                cursor: "default",
+              }
+            : {
+                width: "100vw",
+                height: "100vh",
+                display: "block",
+                imageRendering: "pixelated",
+                touchAction: "none",
+                cursor: "default",
+              }
+        }
         onMouseDown={e=>onDown(e.clientX,e.clientY)}
         onMouseMove={e=>onMove(e.clientX,e.clientY)}
         onMouseUp={onUp} onMouseLeave={onLeave}
